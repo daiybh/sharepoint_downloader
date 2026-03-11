@@ -2,3 +2,6 @@
 .vscode/
 __pycache__/
 downloadUrl_TcTableAnalyzer11.26.4.5.zip
+.vs/
+CppCodes/
+config.json
