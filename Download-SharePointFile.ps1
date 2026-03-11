@@ -1,7 +1,8 @@
 param(
-    [Parameter(Mandatory=$true)][string]$SharePointURL,
+    [Parameter(Mandatory=$false)][string]$SharePointURL,
     [Parameter(Mandatory=$false)][string]$SaveDir = ".",
-    [Parameter(Mandatory=$false)][string]$LogFile = "sharepoint_downloader.log"
+    [Parameter(Mandatory=$false)][string]$LogFile = "sharepoint_downloader.log",
+    [Parameter(Mandatory=$false)][string]$ConfigFile = "config.json"
 )
 
 # 全局变量
@@ -240,30 +241,107 @@ function LoadEnv {
     }    
 }
 
+# 读取配置文件
+function Load-Config {
+    param (
+        [string]$ConfigPath
+    )
+    
+    if (-not (Test-Path -Path $ConfigPath)) {
+        Write-Log "Config file not found: $ConfigPath" "WARNING"
+        return $null
+    }
+    
+    try {
+        $config = Get-Content -Path $ConfigPath -Raw | ConvertFrom-Json
+        Write-Log "Config file loaded successfully"
+        return $config
+    }
+    catch {
+        Write-Log "Failed to load config file: $_" "ERROR"
+        return $null
+    }
+}
+
 # 主程序
 function Main {
     Setup-Logger
     
     Write-Log "SharePoint Downloader Started"
-    Write-Log "URL: $SharePointURL"
+    
+    # 加载配置文件
+    $config = Load-Config -ConfigPath $ConfigFile
+    
+    # 获取 Azure 凭证
+    $azureClientID = $null
+    $azureClientSecret = $null
+    $azureTenantID = $null
+    $urlList = @()
+    
+    if ($config) {
+        # 从配置文件获取凭证
+        $azureClientID = $config.azure_client_id
+        $azureClientSecret = $config.azure_client_secret
+        $azureTenantID = $config.azure_tenant_id
+        
+        if ($config.sharepoint_url) {
+            # 处理 sharepoint_url 数组
+            if ($config.sharepoint_url -is [array]) {
+                foreach ($item in $config.sharepoint_url) {
+                    if ($item.url) {
+                        $urlList += @{ name = $item.name; url = $item.url }
+                    }
+                }
+            }
+            elseif ($config.sharepoint_url -is [string]) {
+                $urlList += @{ name = ""; url = $config.sharepoint_url }
+            }
+        }
+        
+        if ($SaveDir -eq ".") {
+            if($config.download_folder -eq $null) {
+                $SaveDir = $PSScriptRoot
+            } else{
+                $SaveDir = $config.download_folder 
+            }
+
+            
+        }
+    }
+    
+    # 如果没有从配置文件获取到凭证，尝试从命令行参数和环境变量
+    if (-not $azureClientID -or -not $azureClientSecret -or -not $azureTenantID) {
+        Write-Log "Loading credentials from environment variables..."
+        LoadEnv
+        
+        if($azureClientID -eq $null){
+            $azureClientID = $env:AZURE_CLIENT_ID
+        }
+        if( $azureClientSecret -eq $null){
+            $azureClientSecret = $env:AZURE_CLIENT_SECRET
+        }
+        if( $azureTenantID -eq $null){
+            $azureTenantID = $env:AZURE_TENANT_ID
+        }
+    }
+    
+    # 如果没有URL从配置文件中获取，使用命令行参数
+    if ($urlList.Count -eq 0 -and $SharePointURL) {
+        $urlList += @{ name = ""; url = $SharePointURL }
+    }
+    
     Write-Log "Save Directory: $SaveDir"
+    
+    # 验证凭证
+    if (-not $azureClientID -or -not $azureClientSecret -or -not $azureTenantID) {
+        Write-Log "Missing Azure credentials" "ERROR"
+        return $false
+    }
     
     # 验证保存目录
     if (-not (Test-Path -Path $SaveDir)) {
         Write-Log "Creating directory: $SaveDir"
         New-Item -ItemType Directory -Path $SaveDir | Out-Null
-    }
-    
-    # 读取环保境变量或配置文件
-    LoadEnv
-    
-    $azureClientID = $env:AZURE_CLIENT_ID
-    $azureClientSecret = $env:AZURE_CLIENT_SECRET
-    $azureTenantID = $env:AZURE_TENANT_ID
-    
-    if (-not $azureClientID -or -not $azureClientSecret -or -not $azureTenantID) {
-        Write-Log "Missing Azure credentials in environment variables" "ERROR"
-        return $false
     }
     
     # 获取 Access Token
@@ -287,15 +365,38 @@ function Main {
         return $false
     }
     
-    # 下载文件
-    $result = Download-FromSharePoint -SharedURL $SharePointURL -SaveDir $SaveDir -Token $token
+    # 下载文件列表中的所有 URL
+    $allSuccess = $true
+    if ($urlList.Count -eq 0) {
+        Write-Log "No SharePoint URLs to download" "ERROR"
+        return $false
+    }
     
-    if ($result) {
+    foreach ($item in $urlList) {
+        $url = $item.url
+        $name = $item.name
+        if (-not $name) {
+            $name = Split-Path -Leaf $url
+        }
+        
+        Write-Log "Processing URL: $url"
+        $result = Download-FromSharePoint -SharedURL $url -SaveDir $SaveDir -Token $token
+        
+        if ($result) {
+            Write-Log "$name downloaded successfully"
+        }
+        else {
+            Write-Log "$name download failed" "ERROR"
+            $allSuccess = $false
+        }
+    }
+    
+    if ($allSuccess) {
         Write-Log "Program completed successfully at $(Get-Date)"
         return $true
     }
     else {
-        Write-Log "Program failed at $(Get-Date)" "ERROR"
+        Write-Log "Program completed with some failures at $(Get-Date)" "WARNING"
         return $false
     }
 }
