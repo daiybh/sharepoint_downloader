@@ -1,9 +1,50 @@
 
 import requests
-import config
 import logging
 from urllib.parse import urlparse, unquote
 from typing import Tuple, Optional
+import dotenv
+import os
+dotenv.load_dotenv()
+
+import logging
+
+
+
+# 日志配置
+#log_formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
+log_formatter = logging.Formatter('%(message)s')
+file_handler = logging.FileHandler('sharepoint_downloader.log', encoding='utf-8')
+file_handler.setFormatter(log_formatter)
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(log_formatter)
+logging.basicConfig(level=logging.INFO, handlers=[file_handler])
+import time
+logging.info(f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}")
+ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
+#ACCESS_TOKEN = Get_access_token()
+headers = {
+    'Authorization': 'Bearer ' + ACCESS_TOKEN
+}
+
+def Get_access_token():
+    """获取访问令牌"""
+    url = f"https://login.microsoftonline.com/{os.getenv("AZURE_TENANT_ID")}/oauth2/v2.0/token"
+    data = {
+        "client_id": os.getenv("AZURE_CLIENT_ID"),
+        "client_secret": os.getenv("AZURE_CLIENT_SECRET"),
+        "scope": "https://graph.microsoft.com/.default",
+        "grant_type": "client_credentials"
+    }
+    logging.info("#"*20)
+    logging.info("获取访问令牌")
+    logging.info(url)
+    logging.info(data)
+    
+    response = requests.post(url, data=data)
+    response.raise_for_status()
+    logging.info(response.json())
+    return response.json()["access_token"]
 
 def split_url(shared_url: str) -> Tuple[str, str, str]:
     """
@@ -29,13 +70,20 @@ def pretty_print(title,msg):
     logging.info(f"{title}")
     logging.info(f"{msg}")
 
+def httpGet(url):
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        logging.error(f"Failed to get: {e}")
+        return None
 def get_site_id(domain: str, site_path: str) -> Optional[str]:
     url = f'https://graph.microsoft.com/v1.0/sites/{domain}:/{site_path}'
     pretty_print("get_site_id", url)
     try:
-        response = requests.get(url, headers=config.headers)
-        response.raise_for_status()
-        return response.json().get('id')
+        response = httpGet(url)
+        return response.get('id') if response else None
     except Exception as e:
         logging.error(f"Failed to get siteID: {e}")
         return None
@@ -44,9 +92,8 @@ def get_drive_id(site_id: str) -> Optional[str]:
     url = f'https://graph.microsoft.com/v1.0/sites/{site_id}/drives'
     pretty_print("get_drive_id", url)
     try:
-        response = requests.get(url, headers=config.headers)
-        response.raise_for_status()
-        drives = response.json().get('value', [])
+        response = httpGet(url)
+        drives = response.get('value', []) if response else []
         if drives:
             return drives[0]['id']
     except Exception as e:
@@ -57,9 +104,8 @@ def get_file_info(site_id: str, drive_id: str, file_path: str) -> Optional[dict]
     url = f'https://graph.microsoft.com/v1.0/sites/{site_id}/drives/{drive_id}/root:/{file_path}'
     pretty_print("get_file_info", url)
     try:
-        response = requests.get(url, headers=config.headers)
-        response.raise_for_status()
-        return response.json()
+        response = httpGet(url)
+        return response.json() if response else None
     except Exception as e:
         logging.error(f"Failed to get file info: {e}")
         return None
