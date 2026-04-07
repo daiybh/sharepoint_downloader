@@ -1,10 +1,10 @@
 param(
     [Parameter(Mandatory=$false)][string]$SharePointURL,
-    [Parameter(Mandatory=$false)][string]$SaveDir = ".",
     [Parameter(Mandatory=$false)][string]$SaveFileName = "",
+    [Parameter(Mandatory=$false)][bool]$EnableLogging = $false,
+    [Parameter(Mandatory=$false)][string]$SaveDir = ".",
     [Parameter(Mandatory=$false)][string]$LogFile = "sharepoint_downloader.log",
-    [Parameter(Mandatory=$false)][string]$ConfigFile = "config.json",
-    [Parameter(Mandatory=$false)][bool]$EnableLogging = $true
+    [Parameter(Mandatory=$false)][string]$ConfigFile = "config.json"
 )
 
 # 全局变量
@@ -42,12 +42,19 @@ function Split-SharePointURL {
     
     try {
         $uri = [System.Uri]$SharedURL
+
+        
         $domain = $uri.Host
-        $path = $uri.AbsolutePath.Trim('/') -split '/'
+        # because the sharedpointURL is  R%26D , but in bat the %2 was encoded
+        $absolutePath= $uri.AbsolutePath.Trim('/') -replace '/R6D/', '/R&D/' 
+        $absolutePath = $absolutePath -replace '/Shared0Documents/', '/Shared Documents/'
+        $absolutePath = $absolutePath -replace '/Shared%20Documents/', '/Shared Documents/'
+
+        $path = $absolutePath -split '/'
         
         $sitesIndex = $path.IndexOf('sites')
-        $docsIndex = $path.IndexOf('Shared%20Documents')
-        
+        $docsIndex = $path.IndexOf('Shared Documents')
+
         if ($sitesIndex -eq -1 -or $docsIndex -eq -1) {
             Write-Log "URL format is incorrect, unable to find 'sites' or 'Shared Documents'" "ERROR"
             return $null
@@ -55,7 +62,7 @@ function Split-SharePointURL {
         
         $sitePath = ($path[$sitesIndex..($sitesIndex + 1)] -join '/')
         $filePath = ($path[($docsIndex+1)..($path.Length-1)] -join '/')
-        
+
         return @{
             Domain = $domain
             SitePath = $sitePath
