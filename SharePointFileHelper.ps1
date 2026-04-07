@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory=$false)][string]$SaveFileName = "",
     [Parameter(Mandatory=$false)][string]$UploadLocalFile = "",
     [Parameter(Mandatory=$false)][string]$UploadDestPath = "",
-    [Parameter(Mandatory=$false)][bool]$EnableLogging = $false,
+    [Parameter(Mandatory=$false)][bool]$EnableLogging = $true,
     [Parameter(Mandatory=$false)][string]$SaveDir = ".",
     [Parameter(Mandatory=$false)][string]$LogFile = "sharepoint_downloader.log",
     [Parameter(Mandatory=$false)][string]$ConfigFile = "config.json"
