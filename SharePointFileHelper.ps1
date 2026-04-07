@@ -379,11 +379,9 @@ function upload_file_to_sharepoint{
         [string]$LocalFilePath,
         [string]$DestPath
     )
-    
-#https://graph.microsoft.com/v1.0/sites/riedelcommunications.sharepoint.com,2f37d60a-2b81-4a88-9dee-288b5fc259f2,16909fc8-ad87-4a9f-96c2-22dcad480a93/drives
     $SiteID="riedelcommunications.sharepoint.com,2f37d60a-2b81-4a88-9dee-288b5fc259f2,16909fc8-ad87-4a9f-96c2-22dcad480a93"
     $DriveID="b!CtY3L4EriEqd7iiLX8JZ8sifkBaHrZ9KlsIi3K1ICpPR4Y7ssFseQpJlF9TBR2Yi"
-    Upload-LargeFileToSharePoint -SiteID $SiteID `
+    return Upload-LargeFileToSharePoint -SiteID $SiteID `
         -DriveID $DriveID `
         -FilePath "R&D/VideoEngine/$DestPath" `
         -LocalFilePath $LocalFilePath `
@@ -392,8 +390,9 @@ function upload_file_to_sharepoint{
 # 主程序
 function Main {
     Setup-Logger
+    Write-Log "***************"
+    Write-Log "Program started at $(Get-Date)"
     
-    Write-Log "SharePoint Downloader Started"
     
     # 加载配置文件
     $config = Load-Config -ConfigPath $ConfigFile
@@ -491,37 +490,44 @@ function Main {
         return $false
     }
     
-# Testupload
-if($UploadLocalFile -and $UploadDestPath) {
-    upload_file_to_sharepoint -Token $token -LocalFilePath $UploadLocalFile -DestPath $UploadDestPath
-    return $true
-}
-    # 下载文件列表中的所有 URL
     $allSuccess = $true
-    if ($urlList.Count -eq 0) {
-        Write-Log "No SharePoint URLs to download" "ERROR"
-        return $false
+    # Testupload
+    if ($UploadLocalFile -and $UploadDestPath) {
+       $respone= upload_file_to_sharepoint -Token $token -LocalFilePath $UploadLocalFile -DestPath $UploadDestPath
+         if($respone) {
+                Write-Log "File uploaded successfully. File ID: $($respone.id)"
+         } else {
+                Write-Log "File upload failed." "ERROR"
+                $allSuccess = $false
+         }
     }
+    else { 
+
+        # 下载文件列表中的所有 URL
+        if ($urlList.Count -eq 0) {
+            Write-Log "No SharePoint URLs to download" "ERROR"
+            return $false
+        }
     
-    foreach ($item in $urlList) {
-        $url = $item.url
-        $name = $item.name
-        if (-not $name) {
-            $name = Split-Path -Leaf $url
-        }
+        foreach ($item in $urlList) {
+            $url = $item.url
+            $name = $item.name
+            if (-not $name) {
+                $name = Split-Path -Leaf $url
+            }
         
-        Write-Log "Processing URL: $url"
-        $result = Download-FromSharePoint -SharedURL $url -SaveDir $SaveDir -Token $token
+            Write-Log "Processing URL: $url"
+            $result = Download-FromSharePoint -SharedURL $url -SaveDir $SaveDir -Token $token
         
-        if ($result) {
-            Write-Log "$name downloaded successfully"
-        }
-        else {
-            Write-Log "$name download failed" "ERROR"
-            $allSuccess = $false
+            if ($result) {
+                Write-Log "$name downloaded successfully"
+            }
+            else {
+                Write-Log "$name download failed" "ERROR"
+                $allSuccess = $false
+            }
         }
     }
-    
     if ($allSuccess) {
         Write-Log "Program completed successfully at $(Get-Date)"
         return $true
