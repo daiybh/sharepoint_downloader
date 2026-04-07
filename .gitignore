@@ -5,3 +5,7 @@ downloadUrl_TcTableAnalyzer11.26.4.5.zip
 .vs/
 CppCodes/
 config.json
+SharepointDownloader.exe
+sharepoint_downloader.log
+*.zip
+curl.exe
