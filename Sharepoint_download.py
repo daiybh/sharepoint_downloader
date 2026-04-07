@@ -22,10 +22,7 @@ logging.basicConfig(level=logging.INFO, handlers=[file_handler])
 import time
 logging.info(f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}")
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
-#ACCESS_TOKEN = Get_access_token()
-headers = {
-    'Authorization': 'Bearer ' + ACCESS_TOKEN
-}
+
 
 def Get_access_token():
     """获取访问令牌"""
@@ -46,6 +43,10 @@ def Get_access_token():
     logging.info(response.json())
     return response.json()["access_token"]
 
+ACCESS_TOKEN = Get_access_token()
+headers = {
+    'Authorization': 'Bearer ' + ACCESS_TOKEN
+}
 def split_url(shared_url: str) -> Tuple[str, str, str]:
     """
     Parse SharePoint shared link and extract domain, site path, and file path.
