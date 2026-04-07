@@ -1,17 +1,20 @@
 param(
     [Parameter(Mandatory=$false)][string]$SharePointURL,
     [Parameter(Mandatory=$false)][string]$SaveDir = ".",
+    [Parameter(Mandatory=$false)][string]$SaveFileName = "",
     [Parameter(Mandatory=$false)][string]$LogFile = "sharepoint_downloader.log",
-    [Parameter(Mandatory=$false)][string]$ConfigFile = "config.json"
+    [Parameter(Mandatory=$false)][string]$ConfigFile = "config.json",
+    [Parameter(Mandatory=$false)][bool]$EnableLogging = $true
 )
 
 # 全局变量
 $script:LogFile = $LogFile
-
 # 设置日志
 function Setup-Logger {
-    if (-not (Test-Path -Path $script:LogFile)) {
-        New-Item -ItemType File -Path $script:LogFile | Out-Null
+    if ($EnableLogging) {     
+        if (-not (Test-Path -Path $script:LogFile)) {
+            New-Item -ItemType File -Path $script:LogFile | Out-Null
+        }
     }
 }
 
@@ -21,6 +24,10 @@ function Write-Log {
         [Parameter(Mandatory=$true)][string]$Message,
         [Parameter(Mandatory=$false)][ValidateSet("INFO", "ERROR", "WARNING")][string]$Level = "INFO"
     )
+    
+    if (-not $EnableLogging) {
+        return
+    }
     
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $logMessage = "$timestamp $Level $Message"
@@ -219,8 +226,10 @@ function Download-FromSharePoint {
     
     # 准备本地路径
     $fileName = Split-Path -Leaf $filePath
-    $localPath = Join-Path $SaveDir "downloadUrl_$fileName"
-    
+    $localPath = Join-Path $SaveDir "$fileName"
+    if ($SaveFileName) {
+        $localPath = Join-Path $SaveDir $SaveFileName
+    }
     # 下载文件
     return Download-File -DownloadURL $downloadURL -LocalPath $localPath
 }
