@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory=$false)][string]$SharePointURL,
     [Parameter(Mandatory=$false)][string]$SaveFileName = "",
+    [Parameter(Mandatory=$false)][string]$UploadLocalFile = "",
+    [Parameter(Mandatory=$false)][string]$UploadDestPath = "",
     [Parameter(Mandatory=$false)][bool]$EnableLogging = $false,
     [Parameter(Mandatory=$false)][string]$SaveDir = ".",
     [Parameter(Mandatory=$false)][string]$LogFile = "sharepoint_downloader.log",
@@ -279,6 +281,114 @@ function Load-Config {
     }
 }
 
+function Upload-LargeFileToSharePoint {
+    param(
+        [string]$SiteID,
+        [string]$DriveID,
+        [string]$FilePath,        # SharePoint 中的目标路径
+        [string]$LocalFilePath,   # 本地文件路径
+        [string]$Token,
+        [int]$ChunkSize = 5 * 1024 * 1024  # 默认 5MB 每片
+    )
+    
+    $uploadUrl = "https://graph.microsoft.com/v1.0/sites/${SiteID}/drives/${DriveID}/root:/${FilePath}:/createUploadSession"
+    Write-Log "####################"
+    Write-Log "upload_large_file_to_sharepoint"
+    Write-Log "Target URL: $uploadUrl"
+    Write-Log "Local file: $LocalFilePath"
+    
+    try {
+        # 检查本地文件
+        if (-not (Test-Path $LocalFilePath)) {
+            Write-Log "Local file not found: $LocalFilePath" "ERROR"
+            return $null
+        }
+        
+        $fileInfo = Get-Item $LocalFilePath
+        $fileSize = $fileInfo.Length
+        Write-Log "File size: $fileSize bytes"
+        
+        # 1. 创建上传会话
+        $headers = @{
+            "Authorization" = "Bearer $Token"
+            "Content-Type" = "application/json"
+        }
+        
+        $body = @{
+            "@microsoft.graph.conflictBehavior" = "replace"  # 覆盖已存在的文件
+            "name" = (Split-Path $FilePath -Leaf)
+        } | ConvertTo-Json
+        
+        $session = Invoke-RestMethod -Uri $uploadUrl -Method Post -Headers $headers -Body $body
+        $uploadUrl = $session.uploadUrl
+        Write-Log "Upload session created: $uploadUrl"
+        
+        # 2. 分片上传
+        $fileStream = [System.IO.File]::OpenRead($LocalFilePath)
+        $bytesRemaining = $fileSize
+        $offset = 0
+        
+        while ($bytesRemaining -gt 0) {
+            $currentChunkSize = [Math]::Min($ChunkSize, $bytesRemaining)
+            $buffer = New-Object byte[] $currentChunkSize
+            $fileStream.Read($buffer, 0, $currentChunkSize) | Out-Null
+            
+            # 设置分片范围
+            $endOffset = $offset + $currentChunkSize - 1
+            $contentRange = "bytes $offset-$endOffset/$fileSize"
+            
+            $chunkHeaders = @{
+                "Authorization" = "Bearer $Token"
+                "Content-Length" = "$currentChunkSize"
+                "Content-Range" = $contentRange
+            }
+            
+            Write-Log "Uploading chunk: $contentRange"
+            
+            # 上传分片
+            $response = Invoke-RestMethod -Uri $uploadUrl -Method Put -Headers $chunkHeaders -Body $buffer
+            
+            $offset += $currentChunkSize
+            $bytesRemaining -= $currentChunkSize
+            
+            # 显示进度
+            $percentComplete = [Math]::Round(($offset / $fileSize) * 100, 2)
+            Write-Log "Progress: $percentComplete% ($offset / $fileSize bytes)"
+        }
+        
+        $fileStream.Close()
+        Write-Log "File uploaded successfully. File ID: $($response.id)"
+        return $response
+    }
+    catch {
+        Write-Log "Failed to upload large file: $_" "ERROR"
+        if ($_.Exception.Response) {
+            $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+            $reader.BaseStream.Position = 0
+            $reader.DiscardBufferedData()
+            $responseBody = $reader.ReadToEnd()
+            Write-Log "Response body: $responseBody" "ERROR"
+        }
+        return $null
+    }
+}
+
+function upload_file_to_sharepoint{
+    param(
+        [string]$Token,
+        [string]$LocalFilePath,
+        [string]$DestPath
+    )
+    
+#https://graph.microsoft.com/v1.0/sites/riedelcommunications.sharepoint.com,2f37d60a-2b81-4a88-9dee-288b5fc259f2,16909fc8-ad87-4a9f-96c2-22dcad480a93/drives
+    $SiteID="riedelcommunications.sharepoint.com,2f37d60a-2b81-4a88-9dee-288b5fc259f2,16909fc8-ad87-4a9f-96c2-22dcad480a93"
+    $DriveID="b!CtY3L4EriEqd7iiLX8JZ8sifkBaHrZ9KlsIi3K1ICpPR4Y7ssFseQpJlF9TBR2Yi"
+    Upload-LargeFileToSharePoint -SiteID $SiteID `
+        -DriveID $DriveID `
+        -FilePath "R&D/VideoEngine/$DestPath" `
+        -LocalFilePath $LocalFilePath `
+        -Token $Token
+}
 # 主程序
 function Main {
     Setup-Logger
@@ -381,6 +491,11 @@ function Main {
         return $false
     }
     
+# Testupload
+if($UploadLocalFile -and $UploadDestPath) {
+    upload_file_to_sharepoint -Token $token -LocalFilePath $UploadLocalFile -DestPath $UploadDestPath
+    return $true
+}
     # 下载文件列表中的所有 URL
     $allSuccess = $true
     if ($urlList.Count -eq 0) {
