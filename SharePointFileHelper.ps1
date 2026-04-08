@@ -335,7 +335,7 @@ function Upload-LargeFileToSharePoint {
         }
 
         $body = @{
-            "@microsoft.graph.conflictBehavior" = "replace"  # Overwrite existing file
+            "@microsoft.graph.conflictBehavior" = "replace"  # option: replace, rename, fail
             "name" = (Split-Path $FilePath -Leaf)
         } | ConvertTo-Json
 
