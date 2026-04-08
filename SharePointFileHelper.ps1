@@ -1,41 +1,43 @@
+
+
+# =====================
+# SharePoint File Helper
+# Support SharePoint file upload/download, config file and parameterization
+# =====================
+
 param(
-    [Parameter(Mandatory=$false)][string]$SharePointURL,
-    [Parameter(Mandatory=$false)][string]$SaveFileName = "",
-    [Parameter(Mandatory=$false)][string]$UploadLocalFile = "",
-    [Parameter(Mandatory=$false)][string]$UploadDestPath = "",
-    [Parameter(Mandatory=$false)][bool]$EnableLogging = $true,
-    [Parameter(Mandatory=$false)][string]$SaveDir = ".",
-    [Parameter(Mandatory=$false)][string]$LogFile = "sharepoint_downloader.log",
-    [Parameter(Mandatory=$false)][string]$ConfigFile = "config.json"
+    [Parameter()][string]$SharePointURL = "",           # Single download URL
+    [Parameter()][string]$SaveFileName = "",            # Downloaded file name
+    [Parameter()][string]$UploadLocalFile = "",         # Local file path to upload
+    [Parameter()][string]$UploadDestPath = "",          # Destination path in SharePoint
+    [Parameter()][string]$SiteID = "riedelcommunications.sharepoint.com,2f37d60a-2b81-4a88-9dee-288b5fc259f2,16909fc8-ad87-4a9f-96c2-22dcad480a93",                  # SharePoint SiteID (optional, parameter priority)
+    [Parameter()][string]$DriveID = "b!CtY3L4EriEqd7iiLX8JZ8sifkBaHrZ9KlsIi3K1ICpPR4Y7ssFseQpJlF9TBR2Yi",                 # SharePoint DriveID (optional, parameter priority)
+    [Parameter()][bool]$EnableLogging = $true,           # Enable logging
+    [Parameter()][string]$SaveDir = ".",               # Download save directory
+    [Parameter()][string]$LogFile = "sharepoint_downloader.log", # Log file name
+    [Parameter()][string]$ConfigFile = "config.json"    # Config file path
 )
 
-# Global variables
+# ========== Logging ==========
 $script:LogFile = $LogFile
-# Setup logger
-function Setup-Logger {
-    if ($EnableLogging) {     
-        if (-not (Test-Path -Path $script:LogFile)) {
-            New-Item -ItemType File -Path $script:LogFile | Out-Null
-        }
-    }
-}
-
-# Log output to file and console
 function Write-Log {
     param(
-        [Parameter(Mandatory=$true)][string]$Message,
-        [Parameter(Mandatory=$false)][ValidateSet("INFO", "ERROR", "WARNING")][string]$Level = "INFO"
+        [string]$Message,
+        [ValidateSet("INFO", "ERROR", "WARNING")][string]$Level = "INFO"
     )
-
-    if (-not $EnableLogging) {
-        return
+    # Write log message to both console and log file if logging is enabled
+    if ($EnableLogging) {
+        $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        $logMessage = "$timestamp $Level $Message"
+        Write-Host $logMessage
+        Add-Content -Path $script:LogFile -Value $logMessage -Encoding UTF8
     }
-
-    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $logMessage = "$timestamp $Level $Message"
-
-    Write-Host $logMessage
-    Add-Content -Path $script:LogFile -Value $logMessage -Encoding UTF8
+}
+function Setup-Logger {
+    # Create log file if logging is enabled and file does not exist
+    if ($EnableLogging -and -not (Test-Path -Path $script:LogFile)) {
+        New-Item -ItemType File -Path $script:LogFile | Out-Null
+    }
 }
 
 # Parse SharePoint URL
@@ -187,6 +189,46 @@ function Download-File {
     }
 }
 
+
+# Get SiteID, DriveID, and FileInfo from SharePoint URL
+function Get-SiteID-DriveID-FromURL {
+    param(
+        [string]$SharedURL,
+        [string]$Token
+    )
+    # Parse URL
+    $urlParts = Split-SharePointURL -SharedURL $SharedURL
+    if (-not $urlParts) {
+        Write-Log "URL parsing failed." "ERROR"
+        return $null
+    }
+    $domain = $urlParts.Domain
+    $sitePath = $urlParts.SitePath
+    $filePath = $urlParts.FilePath
+    Write-Log "Domain: $domain, SitePath: $sitePath, FilePath: $filePath"
+    # Get SiteID
+    $siteID = Get-SiteID -Domain $domain -SitePath $sitePath -Token $Token
+    if (-not $siteID) {
+        Write-Log "Unable to get siteID." "ERROR"
+        return $null
+    }
+    Write-Log "SiteID: $siteID"
+    # Get DriveID
+    $driveID = Get-DriveID -SiteID $siteID -Token $Token
+    if (-not $driveID) {
+        Write-Log "Unable to get driveID." "ERROR"
+        return $null
+    }
+    Write-Log "DriveID: $driveID"
+    # Get file information
+    $fileInfo = Get-FileInfo -SiteID $siteID -DriveID $driveID -FilePath $filePath -Token $Token
+    if (-not $fileInfo ) {
+        Write-Log "Unable to get file info." "ERROR"
+        return $null
+    }
+    Write-Log "FileInfo: $($fileInfo | ConvertTo-Json -Depth 5)"
+    return @{ SiteID = $siteID; DriveID = $driveID; FileInfo = $fileInfo; FilePath = $filePath }
+}
 # Download from SharePoint
 function Download-FromSharePoint {
     param(
@@ -194,45 +236,23 @@ function Download-FromSharePoint {
         [string]$SaveDir,
         [string]$Token
     )
-
-    # Parse URL
-    $urlParts = Split-SharePointURL -SharedURL $SharedURL
-    if (-not $urlParts) {
-        Write-Log "URL parsing failed, aborting download." "ERROR"
+    # Get SiteID, DriveID and file info using new return object
+    $result = Get-SiteID-DriveID-FromURL -SharedURL $SharedURL -Token $Token
+    if (-not $result) {
+        Write-Log "Failed to get siteID, driveID and file info, aborting download." "ERROR"
         return $false
     }
-
-    $domain = $urlParts.Domain
-    $sitePath = $urlParts.SitePath
-    $filePath = $urlParts.FilePath
-    Write-Log "Domain: $domain, SitePath: $sitePath, FilePath: $filePath"
-
-    # Get SiteID
-    $siteID = Get-SiteID -Domain $domain -SitePath $sitePath -Token $Token
-    if (-not $siteID) {
-        Write-Log "Unable to get siteID, aborting download." "ERROR"
-        return $false
-    }
-    Write-Log "SiteID: $siteID"
-
-    # Get DriveID
-    $driveID = Get-DriveID -SiteID $siteID -Token $Token
-    if (-not $driveID) {
-        Write-Log "Unable to get driveID, aborting download." "ERROR"
-        return $false
-    }
-    Write-Log "DriveID: $driveID"
-
-    # Get file information
-    $fileInfo = Get-FileInfo -SiteID $siteID -DriveID $driveID -FilePath $filePath -Token $Token
+    $siteID = $result.SiteID
+    $driveID = $result.DriveID
+    $fileInfo = $result.FileInfo
+    $filePath = $result.FilePath
+    Write-Log "siteID: $siteID, driveID: $driveID"
     if (-not $fileInfo -or -not $fileInfo.'@microsoft.graph.downloadUrl') {
         Write-Log "Unable to get download link, aborting download." "ERROR"
         return $false
     }
-
     $downloadURL = $fileInfo.'@microsoft.graph.downloadUrl'
     Write-Log "@microsoft.graph.downloadUrl $downloadURL"
-
     # Prepare local path
     $fileName = Split-Path -Leaf $filePath
     $localPath = Join-Path $SaveDir "$fileName"
@@ -373,127 +393,117 @@ function Upload-LargeFileToSharePoint {
     }
 }
 
-function upload_file_to_sharepoint{
+
+# Upload file to SharePoint (SiteID/DriveID passed as parameter)
+function Upload-FileToSharePoint {
     param(
         [string]$Token,
         [string]$LocalFilePath,
-        [string]$DestPath
+        [string]$DestPath,
+        [string]$SiteID,
+        [string]$DriveID
     )
-    $SiteID="riedelcommunications.sharepoint.com,2f37d60a-2b81-4a88-9dee-288b5fc259f2,16909fc8-ad87-4a9f-96c2-22dcad480a93"
-    $DriveID="b!CtY3L4EriEqd7iiLX8JZ8sifkBaHrZ9KlsIi3K1ICpPR4Y7ssFseQpJlF9TBR2Yi"
+    if (-not $SiteID -or -not $DriveID) {
+        Write-Log "SiteID/DriveID not specified, cannot upload." "ERROR"
+        return $null
+    }
     return Upload-LargeFileToSharePoint -SiteID $SiteID `
         -DriveID $DriveID `
-        -FilePath "R&D/VideoEngine/$DestPath" `
+        -FilePath $DestPath `
         -LocalFilePath $LocalFilePath `
         -Token $Token
 }
 
-# Main program
+
+# ========== Main Logic ==========
+# Entry point for the script
 function Main {
     Setup-Logger
     Write-Log "***************"
     Write-Log "Program started at $(Get-Date)"
-
     try {
-        # Load configuration and settings
+        # Load config and initialize settings
         $config = Load-Config -ConfigPath $ConfigFile
         $settings = Initialize-Settings -Config $config
-
-        # Get access token
+        # Get Azure AD access token
         $token = Get-AccessToken -Settings $settings
         if (-not $token) {
             Write-Log "Failed to get access token" "ERROR"
             return $false
         }
-
-        # Execute appropriate functionality based on operation mode
+        # Upload has higher priority
         if ($UploadLocalFile -and $UploadDestPath) {
-            return Handle-Upload -Token $token -LocalFile $UploadLocalFile -DestPath $UploadDestPath
+            $siteIdToUse = $SiteID; $driveIdToUse = $DriveID
+            if (-not $siteIdToUse) { $siteIdToUse = $settings.siteID }
+            if (-not $driveIdToUse) { $driveIdToUse = $settings.driveID }
+            return Handle-Upload -Token $token -LocalFile $UploadLocalFile -DestPath $UploadDestPath -SiteID $siteIdToUse -DriveID $driveIdToUse
         } else {
             return Handle-Downloads -Token $token -Urls $settings.urlList -SaveDir $settings.saveDir
         }
-    }
-    catch {
+    } catch {
         Write-Log "An unexpected error occurred: $_" "ERROR"
         return $false
-    }
-    finally {
+    } finally {
         Write-Log "Program completed at $(Get-Date)"
     }
 }
 
-# Initialize settings
-function Initialize-Settings {
-    param(
-        [object]$Config
-    )
 
+# Initialize config and parameters
+function Initialize-Settings {
+    param([object]$Config)
     $settings = @{
         azureClientID = $null
         azureClientSecret = $null
         azureTenantID = $null
         urlList = @()
         saveDir = $SaveDir
+        siteID = $null
+        driveID = $null
     }
-
-    # Get settings from config file
     if ($Config) {
         $settings.azureClientID = $Config.azure_client_id
         $settings.azureClientSecret = $Config.azure_client_secret
         $settings.azureTenantID = $Config.azure_tenant_id
-
-        # Process SharePoint URL list
+        if ($Config.site_id) { $settings.siteID = $Config.site_id }
+        if ($Config.drive_id) { $settings.driveID = $Config.drive_id }
+        # Parse SharePoint URL list from config
         if ($Config.sharepoint_url) {
             if ($Config.sharepoint_url -is [array]) {
                 foreach ($item in $Config.sharepoint_url) {
-                    if ($item.url) {
-                        $settings.urlList += @{ name = $item.name; url = $item.url }
-                    }
+                    if ($item.url) { $settings.urlList += @{ name = $item.name; url = $item.url } }
                 }
-            }
-            elseif ($Config.sharepoint_url -is [string]) {
+            } elseif ($Config.sharepoint_url -is [string]) {
                 $settings.urlList += @{ name = ""; url = $Config.sharepoint_url }
             }
         }
-
-        # Set save directory
+        # Set download folder from config if not specified
         if ($settings.saveDir -eq "." -and $Config.download_folder) {
             $settings.saveDir = $Config.download_folder
         }
     }
-
-    # If credentials were not obtained from config file, try from environment variables
+    # Fallback to environment variables
     if (-not $settings.azureClientID -or -not $settings.azureClientSecret -or -not $settings.azureTenantID) {
         Write-Log "Loading credentials from environment variables..."
         LoadEnv
-
-        if (-not $settings.azureClientID) {
-            $settings.azureClientID = $env:AZURE_CLIENT_ID
-        }
-        if (-not $settings.azureClientSecret) {
-            $settings.azureClientSecret = $env:AZURE_CLIENT_SECRET
-        }
-        if (-not $settings.azureTenantID) {
-            $settings.azureTenantID = $env:AZURE_TENANT_ID
-        }
+        if (-not $settings.azureClientID) { $settings.azureClientID = $env:AZURE_CLIENT_ID }
+        if (-not $settings.azureClientSecret) { $settings.azureClientSecret = $env:AZURE_CLIENT_SECRET }
+        if (-not $settings.azureTenantID) { $settings.azureTenantID = $env:AZURE_TENANT_ID }
     }
-
-    # If no URLs from config file, use command line parameter
+    # Fallback to command line parameter
     if ($settings.urlList.Count -eq 0 -and $SharePointURL) {
         $settings.urlList += @{ name = ""; url = $SharePointURL }
     }
-
-    # Validate settings
+    if (-not $settings.siteID -and $SiteID) { $settings.siteID = $SiteID }
+    if (-not $settings.driveID -and $DriveID) { $settings.driveID = $DriveID }
     if (-not $settings.azureClientID -or -not $settings.azureClientSecret -or -not $settings.azureTenantID) {
         throw "Missing Azure credentials"
     }
-
-    # Ensure save directory exists
+    # Ensure download directory exists
     if (-not (Test-Path -Path $settings.saveDir)) {
         Write-Log "Creating directory: $settings.saveDir"
         New-Item -ItemType Directory -Path $settings.saveDir | Out-Null
     }
-
     Write-Log "Save Directory: $settings.saveDir"
     return $settings
 }
@@ -526,17 +536,18 @@ function Get-AccessToken {
     }
 }
 
-# Handle upload operation
+
+# Upload operation wrapper
 function Handle-Upload {
     param(
         [string]$Token,
         [string]$LocalFile,
-        [string]$DestPath
+        [string]$DestPath,
+        [string]$SiteID,
+        [string]$DriveID
     )
-
     Write-Log "Starting upload operation"
-    $response = upload_file_to_sharepoint -Token $token -LocalFilePath $LocalFile -DestPath $DestPath
-
+    $response = Upload-FileToSharePoint -Token $Token -LocalFilePath $LocalFile -DestPath $DestPath -SiteID $SiteID -DriveID $DriveID
     if ($response) {
         Write-Log "File uploaded successfully. File ID: $($response.id)"
         return $true
